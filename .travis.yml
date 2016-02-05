@@ -1,0 +1,19 @@
+language: python
+
+sudo: false
+
+python:
+  - 2.7
+  - 3.4
+  - 3.5
+
+addons:
+  apt:
+    packages:
+    - iverilog
+
+install:
+  - pip install pytest pytest-pythonpath pyverilog
+
+script:
+  - python -m pytest tests examples
