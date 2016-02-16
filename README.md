@@ -1,9 +1,9 @@
-Mulpy
+MULPY
 ==============================
 
 [![Build Status](https://travis-ci.org/PyHDI/mulpy.svg)](https://travis-ci.org/PyHDI/mulpy)
 
-A Multi-Paradigm High-Level Hardware Design Framework
+A Multi-Paradigm High-Level Hardware Design Framework in Python
 
 Copyright (C) 2016, Shinya Takamaeda-Yamazaki
 
@@ -17,7 +17,7 @@ Apache License 2.0
 (http://www.apache.org/licenses/LICENSE-2.0)
 
 
-What's Mulpy?
+What's MULPY?
 ==============================
 
 
@@ -76,7 +76,7 @@ These softwares are required for graph visualization by lib.dataflow:
 Install
 --------------------
 
-Install Mulpy:
+Install MULPY:
 
     python setup.py install
 
