@@ -13,9 +13,9 @@ def mkBlinkled():
     led = m.OutputReg('led', 8, initval=0)
     count = m.Reg('count', 10, initval=0)
     
-    m.Seq( count.inc() )
-    m.Seq( count(0), cond=count==1023 )
-    m.Seq( led(led + 1), cond=count==1023 )
+    m.seq( count.inc() )
+    m.seq( count(0), cond=count==1023 )
+    m.seq( led(led + 1), cond=count==1023 )
 
     return m
 
