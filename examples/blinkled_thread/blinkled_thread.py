@@ -10,8 +10,6 @@ from mulpy import *
 
 def mkBlinkled():
     m = Module('blinkled')
-    clk = m.clock('CLK')
-    rst = m.reset('RST')
     led = m.Output('led', 8, initval=0)
 
     def blink(self):
@@ -21,7 +19,7 @@ def mkBlinkled():
             for i in range(1024): pass
             led += 1
 
-    m.Thread(blink, args=())
+    m.thread(blink, args=())
 
     return m
 

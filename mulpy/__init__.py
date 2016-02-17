@@ -8,4 +8,4 @@ from __future__ import absolute_import
 import os
 import sys
 
-from .module import Module
+from .module import Module, ClockDomain

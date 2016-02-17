@@ -3,6 +3,8 @@ from __future__ import print_function
 import os
 import sys
 
+import collections
+
 import inspect
 import ast
 import types
@@ -13,17 +15,42 @@ import veriloggen.core.vtypes as vtypes
 import veriloggen.dataflow as dataflow
 import veriloggen.dataflow.visitor as visitor
 
+class ClockDomain(object):
+    def __init__(self, clock, reset=None):
+        if (not isinstance(clock, vtypes._Variable) or
+            isinstance(clock, vtypes._ParameterVairable)):
+            raise TypeError('clock must be _Variable, not %s' % str(type(clock)))
+        if reset is not None and (not isinstance(reset, vtypes._Variable) or
+                                  isinstance(reset, vtypes._ParameterVairable)):
+            raise TypeError('reset must be _Variable, not %s' % str(type(reset)))
+        self.clock = clock
+        self.reset = reset
+
+    def __hash__(self):
+        return hash( (id(self), id(self.clock), id(self.reset)) )
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
 class Module(veriloggen.Module):
-    """ Hardware Module class """
-    def __init__(self, name=None, clock='CLK', reset='RST', tmp_prefix='_tmp'):
+    """ Module class """
+    def __init__(self, name=None, clock_name='CLK', reset_name='RST', tmp_prefix='_tmp'):
         veriloggen.Module.__init__(self, name, tmp_prefix)
+
+        clock = self.Input(clock_name) if clock_name is not None else None
+        reset = self.Input(reset_name) if reset_name is not None else None
+        self.clock_domain = ClockDomain(clock, reset) if clock is not None else None
         
-        self.clock = self.Input(clock)
-        self.reset = self.Input(reset)
-        self._seq = veriloggen.Seq(self, 'seq', self.clock, self.reset)
+        self._seqs = collections.OrderedDict()
         self._fsms = []
-        
-        self.cache = None
+
+    @property
+    def clock(self):
+        return self.clock_domain.clock
+
+    @property
+    def reset(self):
+        return self.clock_domain.reset
 
     #---------------------------------------------------------------------------
     def comb(self, *statement):
@@ -31,11 +58,32 @@ class Module(veriloggen.Module):
             self.Assign(s)
 
     def seq(self, *statement, **kwargs):
-        self._seq.add(*statement, **kwargs)
+        clock_domain = kwargs['clock_domain'] if 'clock_domain' in kwargs else self.clock_domain
 
-    def fsm(self, name='fsm'):
-        fsm = veriloggen.FSM(self, name, self.clock, self.reset)
+        if clock_domain is None:
+            raise ValueError('This Module has no clock domain.')
+
+        if clock_domain not in self._seqs:
+            self._seqs[clock_domain] = veriloggen.Seq(self, 'seq_' + clock_domain.clock.name,
+                                                      clock_domain.clock,
+                                                      clock_domain.reset)
+            # call make_always method when the module is converted into verilog
+            self.add_hook(self._seqs[clock_domain].make_always)
+            
+        self._seqs[clock_domain].add(*statement, **kwargs)
+
+    def fsm(self, name='fsm', clock_domain=None):
+        if clock_domain is None:
+            clock_domain = self.clock_domain
+        
+        if clock_domain is None:
+            raise ValueError('This Module has no clock domain.')
+
+        fsm = veriloggen.FSM(self, name, clock_domain.clock, clock_domain.reset)
         self._fsms.append(fsm)
+        # call make_always method when the module is converted into verilog
+        self.add_hook(fsm.make_always)
+        
         return fsm
     
     #---------------------------------------------------------------------------
@@ -86,6 +134,7 @@ class Module(veriloggen.Module):
     def dataflow(self, *args, **kwargs):
         """ synthesize a dataflow module and create its instance """
 
+        clock_domain = kwargs['clock_domain'] if 'clock_domain' in kwargs else self.clock_domain
         with_valid = kwargs['with_valid'] if 'with_valid' in kwargs else False
         with_ready = kwargs['with_ready'] if 'with_ready' in kwargs else False
         
@@ -115,8 +164,8 @@ class Module(veriloggen.Module):
 
         inst_ports = []
 
-        inst_ports.append( ('CLK', self.clock) )
-        inst_ports.append( ('RST', self.reset) )
+        inst_ports.append( ('CLK', clock_domain.clock) )
+        inst_ports.append( ('RST', clock_domain.reset) )
         
         for input_var in sorted(input_vars, key=lambda x:x.object_id):
             inst_ports.append( (input_var.input_data, input_var.rtl_data) )
@@ -151,27 +200,48 @@ class Module(veriloggen.Module):
         return tuple(output_ports)
                 
     #---------------------------------------------------------------------------
-    def Thread(self, func, args=()):
+    def thread(self, func, args=()):
         frame = inspect.currentframe()
         _locals = frame.f_back.f_locals
         _globals = frame.f_back.f_globals
 
     #---------------------------------------------------------------------------
-    def to_veriloggen_module(self):
-        if self.cache:
-            return self.cache
-
-        self.resolve()
+    def Instance(self, module, instname, params=None, ports=None):
+        if not isinstance(module, Module): # when veriloggen.Module
+            return veriloggen.Module.Instance(self, module, instname, params, ports)
         
-        self.cache = self
-        return self
-    
-    def to_verilog(self, filename=None):
-        obj = self.to_veriloggen_module()
-        return veriloggen.Module.to_verilog(self, filename)
+        if ports is None:
+            ports = []
 
+        if isinstance(ports, dict):
+            ports = [ (k, v) for k, v in ports.items() ]
+        
+        if module.clock_domain is None or self.clock_domain is None:
+            pass
+        elif len(ports) == 0:
+            ports = [ (module.clock.name, self.clock),
+                      (module.reset.name, self.reset) ]
+        elif len(ports[0]) == 1: # without argument name
+            ports.insert(0, self.reset)
+            ports.insert(0, self.clock)
+        else:
+            ports.insert(0, (module.reset.name, self.reset))
+            ports.insert(0, (module.clock.name, self.clock))
+        
+        return veriloggen.Module.Instance(self, module, instname, params, ports)
+        
     #---------------------------------------------------------------------------
-    def resolve(self):
-        self._seq.make_always()
-        for fsm in self._fsms:
-            fsm.make_always()
+    def copy_ports(self, src, prefix=None, postfix=None, exclude=None):
+        if not isinstance(src, Module): # when veriloggen.Module
+            return veriloggen.Module.copy_ports(self, src, prefix, postfix, exclude)
+
+        if src.clock_domain is None or self.clock_domain is None:
+            return veriloggen.Module.copy_ports(self, src, prefix, postfix, exclude)
+        
+        if exclude is None:
+            exclude = []
+
+        exclude.append('^' + self.clock.name + '$')
+        exclude.append('^' + self.reset.name + '$')
+        
+        return veriloggen.Module.copy_ports(self, src, prefix, postfix, exclude)
